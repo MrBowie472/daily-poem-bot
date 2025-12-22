@@ -9,14 +9,14 @@ from bs4 import BeautifulSoup
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# --- קבלת המפתחות בצורה מאובטחת מ-GitHub Secrets ---
+# --- קבלת המפתחות ---
 try:
     GEMINI_API_KEY = os.environ["GEMINI_API_KEY"].strip()
     BENYEHUDA_KEY = os.environ["BENYEHUDA_KEY"].strip()
     SENDER_EMAIL = os.environ["SENDER_EMAIL"].strip()
     APP_PASSWORD = os.environ["APP_PASSWORD"].strip()
 except KeyError:
-    print("❌ שגיאה: המפתחות לא נמצאו ב-Secrets של גיטהאב.")
+    print("❌ שגיאה: המפתחות לא נמצאו ב-Secrets.")
     exit(1)
 
 RECEIVER_EMAIL = SENDER_EMAIL 
@@ -27,61 +27,60 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
 MAX_ID_GUESS = 59083 
 MAX_WORDS = 450 
 
-def get_ai_analysis(title, author, text_sample, missing_date=False):
-    # --- הנבחרת המנצחת (Gemini 3 בראש) ---
+# --- פונקציות עזר לתמונות וניקוי ---
+
+def get_benyehuda_author_image(author_id):
+    try:
+        url = f"{BASE_URL}/authors/{author_id}"
+        r = requests.get(url, params={'key': BENYEHUDA_KEY}, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            if 'image_url' in data and data['image_url']: return data['image_url']
+            if 'portrait_url' in data and data['portrait_url']: return data['portrait_url']
+    except: pass
+    return None
+
+def get_wiki_author_image(author_name):
+    try:
+        clean = author_name.split('/')[0].replace('רבי','').replace('הרב','').strip()
+        r = requests.get("https://he.wikipedia.org/w/api.php", params={"action": "opensearch", "search": clean, "limit": 1, "format": "json"}).json()
+        if r[1]:
+            r_sum = requests.get(f"https://he.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(r[1][0])}").json()
+            if 'thumbnail' in r_sum: return r_sum['thumbnail'].get('source')
+    except: pass
+    return None
+
+def get_best_author_image(author_id, author_name):
+    img = get_benyehuda_author_image(author_id)
+    if img: return img
+    return get_wiki_author_image(author_name)
+
+def get_ai_analysis(title, author, text_sample, biblio_info, missing_date=False):
     working_models = [
-        "models/gemini-3-flash-preview",           # הכוכב החדש שעבד לך
-        "models/gemini-flash-latest",              # יציב מאוד
+        "models/gemini-3-flash-preview",
+        "models/gemini-flash-latest",
         "models/gemini-2.5-flash-preview-09-2025",
         "models/gemini-2.5-flash-lite",
-        "models/gemini-flash-lite-latest",
         "models/gemma-3-27b-it"
     ]
     
-    date_instruction = ""
-    if missing_date:
-        date_instruction = """
-        (הערה לבוט: שנת הפרסום חסרה. אם ידועה לך ומהימנה, ציין אותה בראש הניתוח: שנת פרסום: [שנה]. אם לא - אל תמציא).
-        """
+    source_context = f"מידע ביבליוגרפי (מקור): {biblio_info}" if biblio_info else ""
+    date_instruction = "(שנת הפרסום חסרה. נסה לחלץ אותה אם ניתן)." if missing_date else ""
 
-    # הפרומפט ההומניסטי המדויק
     prompt = f"""
-    כתוב ניתוח פרשני לשיר עברי, עד 250 מילים סך הכול, מחולק לשני חלקים עם תגיות HTML כפי שמוגדר להלן.
-
-    השיר: "{title}" מאת "{author}".
-    טקסט השיר: "{text_sample[:1500]}..."
-
+    כתוב ניתוח פרשני לשיר עברי (עד 250 מילים).
+    היצירה: "{title}" מאת "{author}".
+    {source_context}
+    טקסט השיר (חלקי): "{text_sample[:1500]}..."
     {date_instruction}
 
-    נקודת המוצא (מחייב):
-    אתה כותב לקורא קבוע:
-    אדם בוגר, משכיל, הומניסט, רגיש למורכבות מוסרית.
-    הוא חי בישראל, מכיר מלחמה, שירות, שבר אזרחי ועייפות אידאולוגית.
-    הוא מחפש בספרות לא נחמה ולא הטפה — אלא הבנה חדה, שקטה, מפוכחת.
-    אל תסביר לו מושגים בסיסיים ואל תנסה “לרגש בכוח”.
-
-    הנחיות סגנון:
-    - עברית מדויקת, אינטליגנטית, לא אקדמית-כבדה.
-    - כתיבה ישירה, מאופקת, בלי קלישאות ובלי פאתוס.
-    - יצירתיות פרשנית עדיפה על בטיחות ניסוחית.
-    - רוח הומניסטית: האדם קודם לסיסמה, השאלה קודמת לתשובה.
-
-    מבנה הפלט (חובה):
+    הנחיה: כתיבה לקורא הומניסט, ישראלי (2025), רגיש, סולד מקיטש.
+    מבנה HTML חובה:
     <h3>הקשר היסטורי-פוליטי</h3>
-    הצג את הרגע ההיסטורי/תרבותי שבו נכתב השיר דרך:
-    - מתח בין יחיד לחברה, או בין אידאה למציאות.
-    - תחושת סדק, עייפות, או חשבון נפש של התקופה.
-    - האופן שבו ההקשר מחלחל לשיר — גם בלי אזכור מפורש.
-    - רוח התקופה ששרה בזמן כתיבת היצירה
-
+    (רוח התקופה, המתח שבין היחיד לכלל).
     <h3>קריאה עכשווית (2025)</h3>
-    פרשנות שמכבדת את הקורא:
-    - מה בשיר מדבר אל מציאות של חוסר ודאות, עומס מוסרי ושאלת שייכות.
-    - חיבור עדין אך ברור לישראל של 2025, ברוח הומניסטית ליברלית.
-    - העדף שאלה חדה או תובנה לא-נוחה על פני מסר מרגיע.
-    סיים במשפט אחד קצר, נקי, חותך — כזה שלא מבקש הסכמה אלא מחשבה.
-
-    * החזר HTML נקי בלבד (ללא ```html).
+    (מה השיר אומר להיום? שאלות מוסר ושייכות. סיום נוקב).
+    * החזר HTML נקי בלבד.
     """
     
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -90,36 +89,17 @@ def get_ai_analysis(title, author, text_sample, missing_date=False):
     for model_raw in working_models:
         clean_model = model_raw.replace("models/", "").strip()
         url = f"{GEMINI_BASE_URL}{clean_model}:generateContent?key={GEMINI_API_KEY}"
-        
         try:
             print(f"      ⏳ מנסה מודל: {clean_model}...")
             response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'}, timeout=20)
-            
             if response.status_code == 200:
                 result = response.json()
                 if 'candidates' in result and result['candidates']:
                     print(f"      ✅ הצלחה עם {clean_model}!")
                     return result['candidates'][0]['content']['parts'][0]['text'].replace('```html', '').replace('```', '')
-            
-            elif response.status_code == 429:
-                 print(f"      ⚠️ עומס (429), עובר לבא...")
-                 time.sleep(0.5)
-            else:
-                 print(f"      ❌ נכשל ({response.status_code})")
-
-        except Exception: continue
-            
+            elif response.status_code == 429: time.sleep(0.5)
+        except: continue
     return "<p>לא ניתן היה לייצר ניתוח עומק הפעם.</p>"
-
-def get_author_image(author_name):
-    try:
-        clean = author_name.split('/')[0].replace('רבי','').replace('הרב','').strip()
-        r = requests.get("[https://he.wikipedia.org/w/api.php](https://he.wikipedia.org/w/api.php)", params={"action": "opensearch", "search": clean, "limit": 1, "format": "json"}).json()
-        if r[1]:
-            r_sum = requests.get(f"[https://he.wikipedia.org/api/rest_v1/page/summary/](https://he.wikipedia.org/api/rest_v1/page/summary/){urllib.parse.quote(r[1][0])}").json()
-            if 'thumbnail' in r_sum: return r_sum['thumbnail'].get('source')
-    except: pass
-    return None
 
 def clean_html(raw_html, max_words):
     soup = BeautifulSoup(raw_html, 'html.parser')
@@ -128,10 +108,7 @@ def clean_html(raw_html, max_words):
     clean_lines = [line for line in text.splitlines() if line.strip() and "פרויקט בן-יהודה" not in line and "הפיקו מתנדבי" not in line]
     final_text = "\n".join(clean_lines)
     final_html = final_text.replace('\n', '<br>')
-    
-    if len(final_text.split()) <= max_words:
-        return f"<div style='direction:rtl; text-align:right;'>{final_html}</div>", False, final_text
-    
+    if len(final_text.split()) <= max_words: return f"<div style='direction:rtl; text-align:right;'>{final_html}</div>", False, final_text
     short_html = "<br>".join(clean_lines[:50]) + "..." 
     return f"<div style='direction:rtl; text-align:right;'>{short_html}</div>", True, final_text
 
@@ -141,28 +118,25 @@ def format_date(meta):
     return meta.get('raw_publication_date') or str(meta.get('year') or "")
 
 def main():
-    print("🎲 מתחיל ריצה יומית בגיטהאב (הנבחרת המנצחת)...")
-    
+    print("🎲 מתחיל ריצה יומית בגיטהאב (עיצוב Rubik + תוכן מלא)...")
     for i in range(1, 101):
         rid = random.randint(1, MAX_ID_GUESS)
-        print(f"\n🔄 בדיקה {i}: מנסה ID {rid}...")
-        
+        print(f"\n🔄 בדיקה {i}: ID {rid}...")
         try:
             r = requests.get(f"{BASE_URL}/texts/{rid}", params={'key': BENYEHUDA_KEY}, timeout=5)
-            
-            if r.status_code != 200: 
-                print(f"   ❌ דילוג (סטטוס {r.status_code})")
-                continue
+            if r.status_code != 200: continue
             
             data = r.json()
             meta = data.get('metadata', {})
-            
             if meta.get('genre') != 'poetry':
                 print(f"   ⚠️ לא שירה ({meta.get('genre')})")
                 continue
             
             title = meta.get('title')
             author = meta.get('author_string')
+            author_id = meta.get('author_id')
+            biblio_info = meta.get('bibliographic_info') or meta.get('source', '')
+            
             print(f"   ✅ נמצא שיר! {title} / {author}")
             
             dl_url = data.get('download_url')
@@ -171,38 +145,54 @@ def main():
             raw = requests.get(dl_url, timeout=10).text
             final_html, is_trunc, clean_text = clean_html(raw, MAX_WORDS)
             
-            if len(clean_text) < 20: 
-                print("   ❌ טקסט קצר מדי")
-                continue
+            if len(clean_text) < 20: continue
             
-            # הפעלת AI
-            ai = get_ai_analysis(title, author, clean_text, missing_date=(format_date(meta)==""))
+            ai = get_ai_analysis(title, author, clean_text, biblio_info, missing_date=(format_date(meta)==""))
             
-            # שליחה
             print("   📧 שולח...")
             msg = MIMEMultipart()
             msg['From'] = SENDER_EMAIL
             msg['To'] = RECEIVER_EMAIL
             msg['Subject'] = f"{title} | {author}"
             
-            img_src = get_author_image(author)
+            img_src = get_best_author_image(author_id, author)
             img_html = f"<img src='{img_src}' style='width:80px; height:80px; border-radius:50%; float:left; margin-right:15px; border:2px solid #333; object-fit:cover;'>" if img_src else ""
-            
             date_display = f" | {format_date(meta)}" if format_date(meta) else ""
+            source_display = f"<br><span style='font-size:14px; color:#777;'>מקור: {biblio_info}</span>" if biblio_info else ""
+
+            # --- עיצוב הפונט (Rubik) ---
+            # כאן אנחנו מגדירים את Rubik כברירת מחדל, עם Heebo כגיבוי
+            font_style = "font-family: 'Rubik', 'Heebo', sans-serif;"
 
             html_body = f"""
-            <div dir='rtl' style='font-family:serif; color:#222; max-width:650px; margin:auto; line-height:1.6;'>
-                <div style='border-bottom:1px solid #ddd; padding-bottom:15px; margin-bottom:25px; overflow:hidden;'>
-                    {img_html}
-                    <h1 style='margin:0; font-size:28px;'>{title}</h1>
-                    <div style='font-size:18px; color:#555;'>{author}{date_display}</div>
+            <html>
+            <head>
+                <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;700&family=Heebo:wght@300;400;700;900&display=swap" rel="stylesheet">
+            </head>
+            <body dir='rtl' style='margin:0; padding:0; background-color:#f4f4f4;'>
+                <div style='background-color:#ffffff; {font_style} color:#222; max-width:650px; margin:20px auto; padding:30px; border-radius:8px; box-shadow:0 0 10px rgba(0,0,0,0.05); line-height:1.6;'>
+                    
+                    <div style='border-bottom:1px solid #eee; padding-bottom:20px; margin-bottom:25px; overflow:hidden;'>
+                        {img_html}
+                        <h1 style='margin:0; font-size:26px; font-weight:700; color:#111;'>{title}</h1>
+                        <div style='font-size:16px; color:#666; margin-top:5px;'>
+                            {author}{date_display}
+                            {source_display}
+                        </div>
+                    </div>
+                    
+                    <div style='font-size:20px; margin-bottom:40px; white-space: pre-wrap; line-height: 1.9; color:#000; font-weight:400;'>{final_html}</div>
+                    
+                    <a href='{data.get('url')}' style='color:#666; text-decoration:none; border-bottom:1px solid #ccc; font-size:14px; display:inline-block; margin-bottom:30px;'>לקריאה באתר בן-יהודה ➜</a>
+                    
+                    <div style='background:#f8f9fa; padding:25px; border-radius:8px; border-right:4px solid #333; font-size:16px;'>
+                        {ai}
+                    </div>
+                    
+                    <div style='text-align:center; font-size:11px; color:#aaa; margin-top:40px; font-weight:300;'>בוט בן-יהודה</div>
                 </div>
-                <div style='font-size:19px; margin-bottom:40px; white-space: pre-wrap;'>{final_html}</div>
-                <a href='{data.get('url')}' style='color:#444; text-decoration:none; border-bottom:1px solid #ccc;'>לקריאה באתר בן-יהודה ➜</a>
-                <hr style='margin:30px 0; border:0; border-top:1px solid #eee;'>
-                <div style='background:#f9f9f9; padding:25px; border-radius:8px; font-family:sans-serif;'>{ai}</div>
-                <div style='text-align:center; font-size:11px; color:#aaa; margin-top:40px;'>בוט בן-יהודה</div>
-            </div>
+            </body>
+            </html>
             """
             msg.attach(MIMEText(html_body, 'html', 'utf-8'))
             s = smtplib.SMTP('smtp.gmail.com', 587); s.starttls(); s.login(SENDER_EMAIL, APP_PASSWORD); s.send_message(msg); s.quit()
