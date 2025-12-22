@@ -27,7 +27,7 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
 MAX_ID_GUESS = 59083 
 MAX_WORDS = 450 
 
-# --- פונקציות עזר לתמונות וניקוי ---
+# --- פונקציות עזר ---
 
 def get_benyehuda_author_image(author_id):
     try:
@@ -75,11 +75,16 @@ def get_ai_analysis(title, author, text_sample, biblio_info, missing_date=False)
     {date_instruction}
 
     הנחיה: כתיבה לקורא הומניסט, ישראלי (2025), רגיש, סולד מקיטש.
-    מבנה HTML חובה:
-    <h3>הקשר היסטורי-פוליטי</h3>
-    (רוח התקופה, המתח שבין היחיד לכלל).
-    <h3>קריאה עכשווית (2025)</h3>
-    (מה השיר אומר להיום? שאלות מוסר ושייכות. סיום נוקב).
+    
+    מבנה HTML חובה (הקפד על התגיות):
+    <div class="analysis-section">
+        <h3>הקשר היסטורי-פוליטי</h3>
+        <p>(רוח התקופה, המתח שבין היחיד לכלל).</p>
+        
+        <h3>קריאה עכשווית (2025)</h3>
+        <p>(מה השיר אומר להיום? שאלות מוסר ושייכות. סיום נוקב).</p>
+    </div>
+
     * החזר HTML נקי בלבד.
     """
     
@@ -118,7 +123,7 @@ def format_date(meta):
     return meta.get('raw_publication_date') or str(meta.get('year') or "")
 
 def main():
-    print("🎲 מתחיל ריצה יומית בגיטהאב (עיצוב Rubik + תוכן מלא)...")
+    print("🎲 מתחיל ריצה יומית בגיטהאב (עיצוב Tahoma)...")
     for i in range(1, 101):
         rid = random.randint(1, MAX_ID_GUESS)
         print(f"\n🔄 בדיקה {i}: ID {rid}...")
@@ -160,36 +165,48 @@ def main():
             date_display = f" | {format_date(meta)}" if format_date(meta) else ""
             source_display = f"<br><span style='font-size:14px; color:#777;'>מקור: {biblio_info}</span>" if biblio_info else ""
 
-            # --- עיצוב הפונט (Rubik) ---
-            # כאן אנחנו מגדירים את Rubik כברירת מחדל, עם Heebo כגיבוי
-            font_style = "font-family: 'Rubik', 'Heebo', sans-serif;"
-
+            # --- עיצוב: Tahoma הוא המלך ---
             html_body = f"""
-            <html>
+            <!DOCTYPE html>
+            <html lang="he" dir="rtl">
             <head>
-                <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;700&family=Heebo:wght@300;400;700;900&display=swap" rel="stylesheet">
+                <meta charset="utf-8">
+                <style>
+                    /* הגדרות בסיס - Tahoma לכל העמוד */
+                    body, h1, h2, h3, p, div {{ font-family: Tahoma, Verdana, Segoe, sans-serif !important; }}
+                    
+                    /* עיצוב אזור הניתוח */
+                    .ai-box {{ background:#f8f9fa; padding:25px; border-radius:8px; border-right:4px solid #333; font-size:16px; line-height: 1.6; }}
+                    .ai-box h3 {{ color: #000; margin-top: 20px; margin-bottom: 10px; font-weight: bold; }}
+                    
+                    /* יישור לשני הצדדים - עובד מצוין עם Tahoma */
+                    .ai-box p, .ai-box div {{ 
+                        text-align: justify !important; 
+                        text-justify: inter-word;
+                    }}
+                </style>
             </head>
-            <body dir='rtl' style='margin:0; padding:0; background-color:#f4f4f4;'>
-                <div style='background-color:#ffffff; {font_style} color:#222; max-width:650px; margin:20px auto; padding:30px; border-radius:8px; box-shadow:0 0 10px rgba(0,0,0,0.05); line-height:1.6;'>
+            <body style="margin:0; padding:0; background-color:#f4f4f4;">
+                <div style="background-color:#ffffff; color:#222; max-width:650px; margin:20px auto; padding:30px; border-radius:8px; box-shadow:0 0 10px rgba(0,0,0,0.05); line-height:1.6; direction:rtl; text-align:right;">
                     
                     <div style='border-bottom:1px solid #eee; padding-bottom:20px; margin-bottom:25px; overflow:hidden;'>
                         {img_html}
-                        <h1 style='margin:0; font-size:26px; font-weight:700; color:#111;'>{title}</h1>
+                        <h1 style="margin:0; font-size:26px; font-weight:bold; color:#111;">{title}</h1>
                         <div style='font-size:16px; color:#666; margin-top:5px;'>
                             {author}{date_display}
                             {source_display}
                         </div>
                     </div>
                     
-                    <div style='font-size:20px; margin-bottom:40px; white-space: pre-wrap; line-height: 1.9; color:#000; font-weight:400;'>{final_html}</div>
+                    <div style='font-size:20px; margin-bottom:40px; white-space: pre-wrap; line-height: 1.8; color:#000; font-weight:normal;'>{final_html}</div>
                     
                     <a href='{data.get('url')}' style='color:#666; text-decoration:none; border-bottom:1px solid #ccc; font-size:14px; display:inline-block; margin-bottom:30px;'>לקריאה באתר בן-יהודה ➜</a>
                     
-                    <div style='background:#f8f9fa; padding:25px; border-radius:8px; border-right:4px solid #333; font-size:16px;'>
+                    <div class="ai-box">
                         {ai}
                     </div>
                     
-                    <div style='text-align:center; font-size:11px; color:#aaa; margin-top:40px; font-weight:300;'>בוט בן-יהודה</div>
+                    <div style='text-align:center; font-size:11px; color:#aaa; margin-top:40px;'>בוט בן-יהודה</div>
                 </div>
             </body>
             </html>
