@@ -58,7 +58,7 @@ def get_ai_analysis(title, author, text_sample, missing_date=False):
 
     for model in models:
         clean_model = model.strip()
-        # בניית הכתובת בצורה בטוחה
+        # בניית הכתובת בטוחה
         url = f"{GEMINI_BASE_URL}{clean_model}:generateContent?key={GEMINI_API_KEY}"
         if '[' in url: url = url.replace('[', '').split(']')[0]
 
@@ -90,26 +90,64 @@ def get_author_image(author_name):
     return None
 
 def clean_html(raw_html, max_words):
+    """
+    פונקציית ניקוי מתוקנת:
+    לא מוחקת תגיות שלמות, אלא מסירה את הטקסט המיותר מתוך המחרוזת הסופית.
+    """
     soup = BeautifulSoup(raw_html, 'html.parser')
-    for h in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']): h.decompose()
-    keywords = ["פרויקט בן-יהודה", "הפיקו מתנדבי", "זמין תמיד בכתובת", "להמשך קריאה"]
-    for t in soup.find_all(['p', 'div', 'small']):
-        if any(k in t.get_text() for k in keywords): t.decompose()
+    
+    # 1. מחיקת כותרות HTML (לא כותרת השיר, אלא h1/h2 בתוך הטקסט אם יש)
+    for h in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']): 
+        h.decompose()
+    
+    # 2. שליפת הטקסט המלא עם שמירה על ירידות שורה
+    text = soup.get_text(separator='\n').strip()
+    
+    # 3. רשימת הביטויים למחיקה (הפוטר של בן-יהודה)
+    junk_phrases = [
+        "פרויקט בן-יהודה",
+        "הפיקו מתנדבי",
+        "זמין תמיד בכתובת",
+        "להמשך קריאה",
+        "כל הזכויות שמורות",
+        "את הטקסט לעיל",
+        "[https://benyehuda.org](https://benyehuda.org)"
+    ]
+    
+    # 4. סינון שורות שמכילות את הזבל
+    clean_lines = []
+    for line in text.splitlines():
+        if not line.strip(): continue # דילוג על שורות ריקות
+        
+        # אם השורה מכילה את אחד מביטויי הזבל - מדלגים עליה
+        if any(junk in line for junk in junk_phrases):
+            continue
             
-    text = soup.get_text(separator=' ')
-    for k in keywords: text = text.replace(k, '')
+        clean_lines.append(line)
+        
+    final_text = "\n".join(clean_lines)
     
-    if len(text.split()) <= max_words: return str(soup), False, text
+    # 5. עיצוב מחדש ל-HTML פשוט
+    # מחליפים ירידות שורה ב-<br> כדי שייראה טוב במייל
+    final_html = final_text.replace('\n', '<br>')
     
-    short, count = "", 0
-    for el in soup.recursiveChildGenerator():
-        if isinstance(el, str):
-            t = el.strip()
-            if not t or any(k in t for k in keywords): continue
-            w = len(t.split())
-            if count + w > max_words: short += "..."; break
-            short += t + "<br>"; count += w
-    return f"<div>{short}</div>", True, text
+    # 6. בדיקת אורך
+    if len(final_text.split()) <= max_words:
+        return f"<div style='direction:rtl; text-align:right;'>{final_html}</div>", False, final_text
+    
+    # קיצור אם צריך
+    short_lines = []
+    count = 0
+    for line in clean_lines:
+        w = len(line.split())
+        if count + w > max_words:
+            short_lines.append("...")
+            break
+        short_lines.append(line)
+        count += w
+    
+    short_html = "<br>".join(short_lines)
+    return f"<div style='direction:rtl; text-align:right;'>{short_html}</div>", True, final_text
 
 def format_date(meta):
     d = meta.get('orig_publication_date')
@@ -118,29 +156,46 @@ def format_date(meta):
 
 def main():
     print("🎲 מתחיל ריצה יומית בענן...")
-    for _ in range(50):
+    # ננסה עד 50 פעמים למצוא שיר תקין
+    for i in range(50):
         try:
             rid = random.randint(1, MAX_ID_GUESS)
             r = requests.get(f"{BASE_URL}/texts/{rid}", params={'key': BENYEHUDA_KEY})
+            
             if r.status_code != 200: continue
+            
             data = r.json()
             meta = data.get('metadata', {})
+            
+            # וידוא שזה שיר
             if meta.get('genre') != 'poetry': continue
             
             title = meta.get('title')
             author = meta.get('author_string')
-            print(f"✅ מועמד: {title} / {author}")
+            print(f"✅ מועמד #{i+1}: {title} / {author} (ID: {rid})")
             
             dl_url = data.get('download_url')
-            if not dl_url: continue
+            if not dl_url: 
+                print("   -> נפסל: אין קישור להורדה")
+                continue
             
             raw = requests.get(dl_url).text
+            
+            # --- כאן התיקון הגדול ---
             final_html, is_trunc, clean_text = clean_html(raw, MAX_WORDS)
             
-            if len(clean_text) < 40: continue
+            # בדיקת אורך אמיתית אחרי הניקוי
+            text_len = len(clean_text)
+            if text_len < 20: # הורדתי את הרף ל-20 תווים כדי לא לפספס שירים קצרים
+                print(f"   -> נפסל: קצר מדי ({text_len} תווים)")
+                continue
             
+            print(f"   -> עבר סינון! אורך: {text_len} תווים.")
+            
+            # הפעלת AI
             ai = get_ai_analysis(title, author, clean_text, missing_date=(format_date(meta)==""))
             
+            # שליחת מייל
             msg = MIMEMultipart()
             msg['From'] = SENDER_EMAIL
             msg['To'] = RECEIVER_EMAIL
@@ -157,7 +212,7 @@ def main():
                     <h1 style='margin:0; font-size:28px;'>{title}</h1>
                     <div style='font-size:18px; color:#555;'>{author}{date_display}</div>
                 </div>
-                <div style='font-size:19px; margin-bottom:40px;'>{final_html}</div>
+                <div style='font-size:19px; margin-bottom:40px; white-space: pre-wrap;'>{final_html}</div>
                 <a href='{data.get('url')}' style='color:#444; text-decoration:none; border-bottom:1px solid #ccc;'>לקריאה באתר בן-יהודה ➜</a>
                 <hr style='margin:30px 0; border:0; border-top:1px solid #eee;'>
                 <div style='background:#f9f9f9; padding:25px; border-radius:8px; font-family:sans-serif;'>{ai}</div>
@@ -167,11 +222,14 @@ def main():
             msg.attach(MIMEText(html_body, 'html', 'utf-8'))
             
             s = smtplib.SMTP('smtp.gmail.com', 587); s.starttls(); s.login(SENDER_EMAIL, APP_PASSWORD); s.send_message(msg); s.quit()
-            print(">>> ✅ נשלח בהצלחה!")
-            return 
+            print(">>> ✅ נשלח בהצלחה! סיימנו להיום.")
+            return # עוצרים אחרי הצלחה אחת
+            
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"⚠️ שגיאה בשיר הנוכחי: {e}")
             pass
+            
+    print("❌ לא נמצא שיר מתאים אחרי 50 נסיונות.")
 
 if __name__ == "__main__":
     main()
