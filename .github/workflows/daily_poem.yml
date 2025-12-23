@@ -3,7 +3,7 @@ name: Daily Poem Bot
 on:
   schedule:
     # 06:30 UTC = 08:30/09:30 Israel Time
-    - cron: '30 6 * * *'
+  - cron: '37 6 * * *'  # 08:37 שעון ישראל (הרבה פחות עמוס)
   workflow_dispatch: # מאפשר כפתור הפעלה ידני לבדיקה
 
 jobs:
